@@ -39,19 +39,19 @@ mostrarBoneco :: Int -> IO ()
 mostrarBoneco erros = putStrLn $ boneco !! min erros (length boneco - 1)
 
 -- Função principal do jogo da forca
-jogar :: Connection -> Int -> String -> IO ()
-jogar conn idUsuario palavra = do
+jogar :: Connection -> Text -> String -> IO ()
+jogar conn nomeUsuario palavra = do
     let oculta = inicializarOculta palavra
-    loopJogo conn idUsuario palavra oculta 0 0
+    loopJogo conn nomeUsuario palavra oculta 0 0
 
 -- Função do loop principal do jogo
-loopJogo :: Connection -> Int -> String -> String -> Int -> Int -> IO ()
-loopJogo conn idUsuario palavra oculta erros pontos = do
+loopJogo :: Connection -> Text -> String -> String -> Int -> Int -> IO ()
+loopJogo conn nomeUsuario palavra oculta erros pontos = do
     if erros >= 6
         then do
             mostrarBoneco erros
             putStrLn $ "Você perdeu! A palavra era: " ++ palavra
-            atualizarPontos conn idUsuario (-pontos) -- Deduz pontos por erros
+            atualizarPontos conn nomeUsuario (-pontos) -- Deduz pontos por erros
         else do
             mostrarBoneco erros
             putStrLn $ "Palavra: " ++ formatarOculta oculta
@@ -68,17 +68,17 @@ loopJogo conn idUsuario palavra oculta erros pontos = do
                         else do
                             putStrLn "Acertou!"
                             let novosPontos = pontos + 30
-                            atualizarPontos conn idUsuario 30 -- Atualiza banco com 30 pontos
+                            atualizarPontos conn nomeUsuario 30 -- Atualiza banco com 30 pontos
                             let novaOcultaEstado = if novaOculta == oculta then oculta else novaOculta
                             if novaOcultaEstado == palavra
                                 then putStrLn $ "Parabéns! Você ganhou! A palavra era: " ++ palavra
-                                else loopJogo conn idUsuario palavra novaOcultaEstado erros novosPontos
+                                else loopJogo conn nomeUsuario palavra novaOcultaEstado erros novosPontos
                 else do
                     putStrLn "Letra errada!"
                     let novosErros = erros + 1
                     let novosPontos = pontos - 10
-                    atualizarPontos conn idUsuario (-10) -- Atualiza banco com -10 pontos
-                    loopJogo conn idUsuario palavra oculta novosErros novosPontos
+                    atualizarPontos conn nomeUsuario (-10) -- Atualiza banco com -10 pontos
+                    loopJogo conn nomeUsuario palavra oculta novosErros novosPontos
 
 -- Conectar ao banco de dados
 conectarBanco :: IO Connection
@@ -123,13 +123,13 @@ adicionarUsuario conn nome pontos vitorias derrotas = do
     putStrLn $ "Usuário " ++ T.unpack nome ++ " adicionado com sucesso!"
 
 -- Atualizar pontos do usuário
-atualizarPontos :: Connection -> Int -> Int -> IO ()
-atualizarPontos conn idUsuario pontos = do
-    let sql = "UPDATE usuarios SET pontos = pontos + ? WHERE id = ?"
-    result <- execute conn sql (pontos, idUsuario)
+atualizarPontos :: Connection -> Text -> Int -> IO ()
+atualizarPontos conn nomeUsuario pontos = do
+    let sql = "UPDATE usuarios SET pontos = pontos + ? WHERE nome = ?"
+    result <- execute conn sql (pontos, nomeUsuario)
     if result > 0
         then putStrLn "Pontos atualizados com sucesso!"
-        else putStrLn "Nenhum usuário encontrado com o ID fornecido."
+        else putStrLn "Nenhum usuário encontrado com o nome fornecido."
 
 -- Função principal que começa o jogo
 main :: IO ()
@@ -137,13 +137,13 @@ main = do
     conn <- conectarBanco
     exibirClassificacao conn
     putStrLn "Bem-vindo ao jogo da Forca!"
-    putStrLn "Digite o ID do jogador: "
-    idUsuario <- readLn
+    putStrLn "Digite o nome do jogador: "
+    nomeUsuario <- T.pack <$> getLine
     putStrLn "Digite a palavra para o jogo: "
     palavra <- getLine
     let palavraLimpa = filter (/= ' ') (map toLower palavra) -- Remove espaços e converte para minúsculas
     when (null palavraLimpa) $ do
         putStrLn "A palavra não pode ser vazia. Tente novamente."
         main
-    jogar conn idUsuario palavraLimpa
+    jogar conn nomeUsuario palavraLimpa
     close conn
