@@ -1,3 +1,10 @@
+{-# LANGUAGE OverloadedStrings #-}
+
+import Database.MySQL.Simple
+import Database.MySQL.Simple.QueryResults
+import Control.Exception (bracket)
+import Data.Text (Text)
+import qualified Data.Text as T
 import Control.Monad (when)
 import Data.List (intersperse)
 import Data.Char (toLower)
@@ -68,9 +75,55 @@ loopJogo palavra oculta erros = do
                     let novosErros = erros + 1
                     loopJogo palavra oculta novosErros
 
+-- Conectar ao banco de dados
+conectarBanco :: IO Connection
+conectarBanco = connect
+    defaultConnectInfo { connectHost = "autorack.proxy.rlwy.net"
+                       , connectUser = "root"
+                       , connectPassword = "vwUBStNRhctaVJejQuzCZxFhowguOcFS"
+                       , connectDatabase = "railway"
+                       , connectPort = 41717
+                       }
+
+-- Exibir a classificação dos usuários
+exibirClassificacao :: Connection -> IO ()
+exibirClassificacao conn = do
+    resultados <- query_ conn "SELECT nome, pontos, vitorias, derrotas FROM usuarios ORDER BY pontos DESC" :: IO [(Text, Int, Int, Int)]
+    putStrLn "Classificação dos Usuários:"
+    putStrLn $ T.unpack $ T.intercalate " " ["Nome", "Pontos", "Vitórias", "Derrotas"]
+    putStrLn $ replicate 50 '='
+    mapM_ printResultado resultados
+  where
+    printResultado (nome, pontos, vitorias, derrotas) =
+        putStrLn $ T.unpack $ T.intercalate " " [nome, T.pack (show pontos), T.pack (show vitorias), T.pack (show derrotas)]
+
+
+-- Adicionar um usuário
+adicionarUsuario :: Connection -> Text -> Int -> Int -> Int -> IO ()
+adicionarUsuario conn nome pontos vitorias derrotas = do
+    let sql = "INSERT INTO usuarios (nome, pontos, vitorias, derrotas) VALUES (?, ?, ?, ?)"
+    execute conn sql (nome, pontos, vitorias, derrotas)
+    putStrLn $ "Usuário " ++ T.unpack nome ++ " adicionado com sucesso!"
+
+-- Atualizar pontos do usuário
+atualizarPontos :: Connection -> Int -> Int -> IO ()
+atualizarPontos conn idUsuario pontos = do
+    let sql = "UPDATE usuarios SET pontos = pontos + ? WHERE id = ?"
+    result <- execute conn sql (pontos, idUsuario)
+    if result > 0
+        then putStrLn "Pontos atualizados com sucesso!"
+        else putStrLn "Nenhum usuário encontrado com o ID fornecido."
+
+
+
 -- Função principal que começa o jogo
 main :: IO ()
 main = do
+    conn <- conectarBanco
+    adicionarUsuario conn "João" 100 5 2
+    exibirClassificacao conn
+    atualizarPontos conn 1 50
+    close conn
     putStrLn "Bem-vindo ao jogo da Forca!"
     putStr "Digite a palavra para o jogo: "
     palavra <- getLine
@@ -79,3 +132,4 @@ main = do
         putStrLn "A palavra não pode ser vazia. Tente novamente."
         main
     jogar palavraLimpa
+
