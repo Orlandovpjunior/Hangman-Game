@@ -39,18 +39,19 @@ mostrarBoneco :: Int -> IO ()
 mostrarBoneco erros = putStrLn $ boneco !! min erros (length boneco - 1)
 
 -- Função principal do jogo da forca
-jogar :: String -> IO ()
-jogar palavra = do
+jogar :: Connection -> Int -> String -> IO ()
+jogar conn idUsuario palavra = do
     let oculta = inicializarOculta palavra
-    loopJogo palavra oculta 0
+    loopJogo conn idUsuario palavra oculta 0 0
 
 -- Função do loop principal do jogo
-loopJogo :: String -> String -> Int -> IO ()
-loopJogo palavra oculta erros = do
+loopJogo :: Connection -> Int -> String -> String -> Int -> Int -> IO ()
+loopJogo conn idUsuario palavra oculta erros pontos = do
     if erros >= 6
         then do
             mostrarBoneco erros
             putStrLn $ "Você perdeu! A palavra era: " ++ palavra
+            atualizarPontos conn idUsuario (-pontos) -- Deduz pontos por erros
         else do
             mostrarBoneco erros
             putStrLn $ "Palavra: " ++ formatarOculta oculta
@@ -64,16 +65,20 @@ loopJogo palavra oculta erros = do
                     let novaOculta = atualizarOculta palavra palpite oculta
                     if novaOculta == oculta
                         then putStrLn "Você já adivinhou essa letra."
-                        else putStrLn "Acertou!"
-                    let novosErros = erros
-                    let novaOcultaEstado = if novaOculta == oculta then oculta else novaOculta
-                    if novaOcultaEstado == palavra
-                        then putStrLn $ "Parabéns! Você ganhou! A palavra era: " ++ palavra
-                        else loopJogo palavra novaOcultaEstado novosErros
+                        else do
+                            putStrLn "Acertou!"
+                            let novosPontos = pontos + 30
+                            atualizarPontos conn idUsuario 30 -- Atualiza banco com 30 pontos
+                            let novaOcultaEstado = if novaOculta == oculta then oculta else novaOculta
+                            if novaOcultaEstado == palavra
+                                then putStrLn $ "Parabéns! Você ganhou! A palavra era: " ++ palavra
+                                else loopJogo conn idUsuario palavra novaOcultaEstado erros novosPontos
                 else do
                     putStrLn "Letra errada!"
                     let novosErros = erros + 1
-                    loopJogo palavra oculta novosErros
+                    let novosPontos = pontos - 10
+                    atualizarPontos conn idUsuario (-10) -- Atualiza banco com -10 pontos
+                    loopJogo conn idUsuario palavra oculta novosErros novosPontos
 
 -- Conectar ao banco de dados
 conectarBanco :: IO Connection
@@ -85,18 +90,30 @@ conectarBanco = connect
                        , connectPort = 41717
                        }
 
--- Exibir a classificação dos usuários
+-- Exibir a classificação dos usuários com numeração e alinhamento
 exibirClassificacao :: Connection -> IO ()
 exibirClassificacao conn = do
     resultados <- query_ conn "SELECT nome, pontos, vitorias, derrotas FROM usuarios ORDER BY pontos DESC" :: IO [(Text, Int, Int, Int)]
     putStrLn "Classificação dos Usuários:"
-    putStrLn $ T.unpack $ T.intercalate " " ["Nome", "Pontos", "Vitórias", "Derrotas"]
-    putStrLn $ replicate 50 '='
-    mapM_ printResultado resultados
+    putStrLn $ T.unpack $ T.intercalate "  " ["Posição", "Nome", "Pontos", "Vitórias", "Derrotas"]
+    putStrLn $ replicate 60 '='
+    mapM_ (uncurry printResultado) (zip [1..] resultados)
   where
-    printResultado (nome, pontos, vitorias, derrotas) =
-        putStrLn $ T.unpack $ T.intercalate " " [nome, T.pack (show pontos), T.pack (show vitorias), T.pack (show derrotas)]
+    printResultado pos (nome, pontos, vitorias, derrotas) = do
+        let posStr = show pos ++ "º"
+        let nomeStr = T.unpack nome
+        let pontosStr = show pontos
+        let vitoriasStr = show vitorias
+        let derrotasStr = show derrotas
+        putStrLn $ alignLeft 8 posStr ++ alignLeft 15 nomeStr ++ alignRight 10 pontosStr ++ alignRight 10 vitoriasStr ++ alignRight 10 derrotasStr
 
+-- Função auxiliar para alinhar à esquerda com um tamanho fixo
+alignLeft :: Int -> String -> String
+alignLeft n s = s ++ replicate (n - length s) ' '
+
+-- Função auxiliar para alinhar à direita com um tamanho fixo
+alignRight :: Int -> String -> String
+alignRight n s = replicate (n - length s) ' ' ++ s
 
 -- Adicionar um usuário
 adicionarUsuario :: Connection -> Text -> Int -> Int -> Int -> IO ()
@@ -114,22 +131,19 @@ atualizarPontos conn idUsuario pontos = do
         then putStrLn "Pontos atualizados com sucesso!"
         else putStrLn "Nenhum usuário encontrado com o ID fornecido."
 
-
-
 -- Função principal que começa o jogo
 main :: IO ()
 main = do
     conn <- conectarBanco
-    adicionarUsuario conn "João" 100 5 2
     exibirClassificacao conn
-    atualizarPontos conn 1 50
-    close conn
     putStrLn "Bem-vindo ao jogo da Forca!"
-    putStr "Digite a palavra para o jogo: "
+    putStrLn "Digite o ID do jogador: "
+    idUsuario <- readLn
+    putStrLn "Digite a palavra para o jogo: "
     palavra <- getLine
     let palavraLimpa = filter (/= ' ') (map toLower palavra) -- Remove espaços e converte para minúsculas
     when (null palavraLimpa) $ do
         putStrLn "A palavra não pode ser vazia. Tente novamente."
         main
-    jogar palavraLimpa
-
+    jogar conn idUsuario palavraLimpa
+    close conn
