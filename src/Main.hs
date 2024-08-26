@@ -8,6 +8,7 @@ import qualified Data.Text as T
 import Control.Monad (when)
 import Data.List (intersperse)
 import Data.Char (toLower)
+import System.Console.ANSI (clearScreen)
 
 -- Representações do boneco
 boneco :: [String]
@@ -38,20 +39,58 @@ formatarOculta oculta = unwords (map (:[]) oculta)
 mostrarBoneco :: Int -> IO ()
 mostrarBoneco erros = putStrLn $ boneco !! min erros (length boneco - 1)
 
--- Função principal do jogo da forca
-jogar :: Connection -> Text -> String -> IO ()
-jogar conn nomeUsuario palavra = do
-    let oculta = inicializarOculta palavra
-    loopJogo conn nomeUsuario palavra oculta 0 0
+loopJogoDoisJogadores :: Connection -> Text -> Text -> String -> String -> String -> Int -> Int -> Int -> Int -> IO ()
+loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 palavra oculta1 oculta2 erros1 erros2 pontos1 pontos2 = do
+    clearScreen
 
--- Função do loop principal do jogo
-loopJogo :: Connection -> Text -> String -> String -> Int -> Int -> IO ()
-loopJogo conn nomeUsuario palavra oculta erros pontos = do
+    -- Turno do jogador 1
+    putStrLn $ "Turno do Jogador 1: " ++ T.unpack nomeJogador1
+    (novaOculta1, novosErros1, novosPontos1) <- loopTurno conn nomeJogador1 palavra oculta1 erros1 pontos1
+
+    -- Verifica se o jogador 1 ganhou ou perdeu
+    if novaOculta1 == palavra || novosErros1 >= 6
+        then do
+            if novaOculta1 == palavra
+                then do
+                    putStrLn $ T.unpack nomeJogador1 ++ " venceu!"
+                    atualizarVitorias conn nomeJogador1 -- Registra vitória do jogador 1
+                    atualizarDerrotas conn nomeJogador2 -- Registra derrota do jogador 2
+                else do
+                    putStrLn $ T.unpack nomeJogador1 ++ " perdeu! A palavra era: " ++ palavra
+                    atualizarDerrotas conn nomeJogador1 -- Registra derrota do jogador 1
+                    atualizarVitorias conn nomeJogador2 -- Registra vitória do jogador 2
+            return ()  -- Finaliza o jogo se o jogador 1 ganhou ou perdeu
+        else do
+            clearScreen
+            -- Turno do jogador 2
+            putStrLn $ "Turno do Jogador 2: " ++ T.unpack nomeJogador2
+            (novaOculta2, novosErros2, novosPontos2) <- loopTurno conn nomeJogador2 palavra oculta2 erros2 pontos2
+
+            -- Verifica se o jogador 2 ganhou ou perdeu
+            if novaOculta2 == palavra || novosErros2 >= 6
+                then do
+                    if novaOculta2 == palavra
+                        then do
+                            putStrLn $ T.unpack nomeJogador2 ++ " venceu!"
+                            atualizarVitorias conn nomeJogador2 -- Registra vitória do jogador 2
+                            atualizarDerrotas conn nomeJogador1 -- Registra derrota do jogador 1
+                        else do
+                            putStrLn $ T.unpack nomeJogador2 ++ " perdeu! A palavra era: " ++ palavra
+                            atualizarDerrotas conn nomeJogador2 -- Registra derrota do jogador 2
+                            atualizarVitorias conn nomeJogador1 -- Registra vitória do jogador 1
+                    return ()  -- Finaliza o jogo se o jogador 2 ganhou ou perdeu
+                else loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 palavra novaOculta1 novaOculta2 novosErros1 novosErros2 novosPontos1 novosPontos2
+
+-- Função para o turno de cada jogador
+loopTurno :: Connection -> Text -> String -> String -> Int -> Int -> IO (String, Int, Int)
+loopTurno conn nomeUsuario palavra oculta erros pontos = do
     if erros >= 6
         then do
             mostrarBoneco erros
             putStrLn $ "Você perdeu! A palavra era: " ++ palavra
-            atualizarPontos conn nomeUsuario (-pontos) -- Deduz pontos por erros
+            atualizarPontos conn nomeUsuario (-pontos)
+            atualizarDerrotas conn nomeUsuario
+            return (oculta, erros, pontos)
         else do
             mostrarBoneco erros
             putStrLn $ "Palavra: " ++ formatarOculta oculta
@@ -59,26 +98,60 @@ loopJogo conn nomeUsuario palavra oculta erros pontos = do
             putStr "Adivinhe uma letra: "
             palpite <- getChar
             _ <- getLine -- Para consumir o caractere de nova linha após a entrada
-            
+
             if palpite `elem` palavra
                 then do
                     let novaOculta = atualizarOculta palavra palpite oculta
                     if novaOculta == oculta
-                        then putStrLn "Você já adivinhou essa letra."
+                        then do
+                            putStrLn "Você já adivinhou essa letra. Tente outra."
+                            loopTurno conn nomeUsuario palavra oculta erros pontos
                         else do
                             putStrLn "Acertou!"
                             let novosPontos = pontos + 30
-                            atualizarPontos conn nomeUsuario 30 -- Atualiza banco com 30 pontos
-                            let novaOcultaEstado = if novaOculta == oculta then oculta else novaOculta
-                            if novaOcultaEstado == palavra
-                                then putStrLn $ "Parabéns! Você ganhou! A palavra era: " ++ palavra
-                                else loopJogo conn nomeUsuario palavra novaOcultaEstado erros novosPontos
+                            atualizarPontos conn nomeUsuario 30
+                            if novaOculta == palavra
+                                then do
+                                    putStrLn $ "Parabéns! Você ganhou! A palavra era: " ++ palavra
+                                    atualizarVitorias conn nomeUsuario
+                                    return (novaOculta, erros, novosPontos)
+                                else return (novaOculta, erros, novosPontos)
                 else do
                     putStrLn "Letra errada!"
                     let novosErros = erros + 1
                     let novosPontos = pontos - 10
-                    atualizarPontos conn nomeUsuario (-10) -- Atualiza banco com -10 pontos
-                    loopJogo conn nomeUsuario palavra oculta novosErros novosPontos
+                    atualizarPontos conn nomeUsuario (-10)
+                    return (oculta, novosErros, novosPontos)
+
+-- Função principal que começa o jogo com dois jogadores
+main :: IO ()
+main = do
+    conn <- conectarBanco
+    exibirClassificacao conn
+    putStrLn "Bem-vindo ao jogo da Forca!"
+
+    -- Seleção dos jogadores
+    putStrLn "Digite o nome do jogador 1: "
+    nomeJogador1 <- T.pack <$> getLine
+    putStrLn "Digite o nome do jogador 2: "
+    nomeJogador2 <- T.pack <$> getLine
+
+    -- Seleção da palavra
+    putStrLn "Digite a palavra para o jogo: "
+    palavra <- getLine
+    let palavraLimpa = filter (/= ' ') (map toLower palavra)
+    when (null palavraLimpa) $ do
+        putStrLn "A palavra não pode ser vazia. Tente novamente."
+        main
+
+    -- Inicializa a palavra oculta para ambos os jogadores
+    let oculta1 = inicializarOculta palavraLimpa
+    let oculta2 = inicializarOculta palavraLimpa
+
+    -- Inicia o loop do jogo
+    loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 palavraLimpa oculta1 oculta2 0 0 0 0
+
+    close conn
 
 -- Conectar ao banco de dados
 conectarBanco :: IO Connection
@@ -89,6 +162,20 @@ conectarBanco = connect
                        , connectDatabase = "railway"
                        , connectPort = 41717
                        }
+
+-- Atualizar o número de derrotas do usuário
+atualizarDerrotas :: Connection -> Text -> IO ()
+atualizarDerrotas conn nomeUsuario = do
+    let sql = "UPDATE usuarios SET derrotas = derrotas + 1 WHERE nome = ?"
+    execute conn sql (Only nomeUsuario)
+    putStrLn "Derrota registrada com sucesso!"
+
+-- Atualizar o número de vitórias do usuário
+atualizarVitorias :: Connection -> Text -> IO ()
+atualizarVitorias conn nomeUsuario = do
+    let sql = "UPDATE usuarios SET vitorias = vitorias + 1 WHERE nome = ?"
+    execute conn sql (Only nomeUsuario)
+    putStrLn "Vitória registrada com sucesso!"
 
 -- Exibir a classificação dos usuários com numeração e alinhamento
 exibirClassificacao :: Connection -> IO ()
@@ -107,43 +194,12 @@ exibirClassificacao conn = do
         let derrotasStr = show derrotas
         putStrLn $ alignLeft 8 posStr ++ alignLeft 15 nomeStr ++ alignRight 10 pontosStr ++ alignRight 10 vitoriasStr ++ alignRight 10 derrotasStr
 
--- Função auxiliar para alinhar à esquerda com um tamanho fixo
-alignLeft :: Int -> String -> String
-alignLeft n s = s ++ replicate (n - length s) ' '
+    alignLeft n str = str ++ replicate (n - length str) ' '
+    alignRight n str = replicate (n - length str) ' ' ++ str
 
--- Função auxiliar para alinhar à direita com um tamanho fixo
-alignRight :: Int -> String -> String
-alignRight n s = replicate (n - length s) ' ' ++ s
-
--- Adicionar um usuário
-adicionarUsuario :: Connection -> Text -> Int -> Int -> Int -> IO ()
-adicionarUsuario conn nome pontos vitorias derrotas = do
-    let sql = "INSERT INTO usuarios (nome, pontos, vitorias, derrotas) VALUES (?, ?, ?, ?)"
-    execute conn sql (nome, pontos, vitorias, derrotas)
-    putStrLn $ "Usuário " ++ T.unpack nome ++ " adicionado com sucesso!"
-
--- Atualizar pontos do usuário
+-- Atualizar a pontuação do usuário
 atualizarPontos :: Connection -> Text -> Int -> IO ()
 atualizarPontos conn nomeUsuario pontos = do
     let sql = "UPDATE usuarios SET pontos = pontos + ? WHERE nome = ?"
-    result <- execute conn sql (pontos, nomeUsuario)
-    if result > 0
-        then putStrLn "Pontos atualizados com sucesso!"
-        else putStrLn "Nenhum usuário encontrado com o nome fornecido."
-
--- Função principal que começa o jogo
-main :: IO ()
-main = do
-    conn <- conectarBanco
-    exibirClassificacao conn
-    putStrLn "Bem-vindo ao jogo da Forca!"
-    putStrLn "Digite o nome do jogador: "
-    nomeUsuario <- T.pack <$> getLine
-    putStrLn "Digite a palavra para o jogo: "
-    palavra <- getLine
-    let palavraLimpa = filter (/= ' ') (map toLower palavra) -- Remove espaços e converte para minúsculas
-    when (null palavraLimpa) $ do
-        putStrLn "A palavra não pode ser vazia. Tente novamente."
-        main
-    jogar conn nomeUsuario palavraLimpa
-    close conn
+    execute conn sql (pontos, nomeUsuario)
+    putStrLn "Pontuação atualizada com sucesso!"

@@ -67,7 +67,8 @@ executable Hangman-Game
     -- other-extensions:
 
     -- Other library packages from which modules are imported.
-    build-depends:    base >= 4.13 && < 5.0,mysql-simple,text
+    build-depends:    base >= 4.13 && < 5.0, mysql-simple, text, ansi-terminal,random
+
 
     -- Directories containing source files.
     hs-source-dirs:   .
