@@ -6,7 +6,7 @@ import Database (atualizarPontos, atualizarDerrotas, atualizarVitorias)
 import Database.MySQL.Simple (Connection)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Control.Monad (when)
+import Control.Monad (when, foldM)
 import Data.Char (toLower)
 import System.Console.ANSI (clearScreen)
 
@@ -40,8 +40,8 @@ mostrarBoneco :: Int -> IO ()
 mostrarBoneco erros = putStrLn $ boneco !! min erros (length boneco - 1)
 
 -- Função para o turno de cada jogador
-loopTurno :: Connection -> Text -> String -> String -> Int -> Int -> IO (String, Int, Int)
-loopTurno conn nomeUsuario palavra oculta erros pontos = do
+loopTurnoPalavra :: Connection -> Text -> String -> String -> Int -> Int -> IO (String, Int, Int)
+loopTurnoPalavra conn nomeUsuario palavra oculta erros pontos = do
     if erros >= 6
         then do
             mostrarBoneco erros
@@ -63,7 +63,7 @@ loopTurno conn nomeUsuario palavra oculta erros pontos = do
                     if novaOculta == oculta
                         then do
                             putStrLn "Você já adivinhou essa letra. Tente outra."
-                            loopTurno conn nomeUsuario palavra oculta erros pontos
+                            loopTurnoPalavra conn nomeUsuario palavra oculta erros pontos
                         else do
                             putStrLn "Acertou!"
                             let novosPontos = pontos + 30
@@ -81,44 +81,45 @@ loopTurno conn nomeUsuario palavra oculta erros pontos = do
                     atualizarPontos conn nomeUsuario (-10)
                     return (oculta, novosErros, novosPontos)
 
-loopJogoDoisJogadores :: Connection -> Text -> Text -> String -> String -> String -> Int -> Int -> Int -> Int -> IO ()
-loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 palavra oculta1 oculta2 erros1 erros2 pontos1 pontos2 = do
+loopTurno :: Connection -> Text -> [String] -> [String] -> Int -> Int -> IO ([String], Int, Int)
+loopTurno conn nomeUsuario palavras oculta erros pontos = do
+    -- Função auxiliar para processar cada palavra
+    let processarTurno (palavra, ocultaAtual) = do
+            (novaOculta, novosErros, novosPontos) <- loopTurnoPalavra conn nomeUsuario palavra ocultaAtual erros pontos
+            return (novaOculta, novosErros, novosPontos)
+    
+    -- Processa cada palavra usando foldM
+    (ocultasFinal, errosFinal, pontosFinal) <- foldM (\(ocultas, e, p) (palavra, ocultaAtual) -> do
+                                                      (novaOculta, novosErros, novosPontos) <- processarTurno (palavra, ocultaAtual)
+                                                      return (ocultas ++ [novaOculta], novosErros, novosPontos))
+                                                    ([], erros, pontos)
+                                                    (zip palavras oculta)
+    return (ocultasFinal, errosFinal, pontosFinal)
+
+
+loopJogoDoisJogadores :: Connection -> Text -> Text -> [String] -> [String] -> [String] -> Int -> Int -> Int -> Int -> IO ()
+loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 palavras oculta1 oculta2 erros1 erros2 pontos1 pontos2 = do
     clearScreen
 
     -- Turno do jogador 1
-    putStrLn $ "Turno do Jogador 1: " ++ T.unpack nomeJogador1
-    (novaOculta1, novosErros1, novosPontos1) <- loopTurno conn nomeJogador1 palavra oculta1 erros1 pontos1
+    putStrLn $ "Turno de " ++ T.unpack nomeJogador1
+    (novaOculta1, novosErros1, novosPontos1) <- loopTurno conn nomeJogador1 palavras oculta1 erros1 pontos1
+    clearScreen
 
-    -- Verifica se o jogador 1 ganhou ou perdeu
-    if novaOculta1 == palavra || novosErros1 >= 6
+    -- Turno do jogador 2
+    putStrLn $ "Turno de " ++ T.unpack nomeJogador2
+    (novaOculta2, novosErros2, novosPontos2) <- loopTurno conn nomeJogador2 palavras oculta2 erros2 pontos2
+    clearScreen
+
+    -- Verifica se ambos terminaram
+    if all (uncurry (==)) (zip palavras novaOculta1) && all (uncurry (==)) (zip palavras novaOculta2)
         then do
-            if novaOculta1 == palavra
-                then do
-                    putStrLn $ T.unpack nomeJogador1 ++ " venceu!"
-                    atualizarVitorias conn nomeJogador1 -- Registra vitória do jogador 1
-                    atualizarDerrotas conn nomeJogador2 -- Registra derrota do jogador 2
-                else do
-                    putStrLn $ T.unpack nomeJogador1 ++ " perdeu! A palavra era: " ++ palavra
-                    atualizarDerrotas conn nomeJogador1 -- Registra derrota do jogador 1
-                    atualizarVitorias conn nomeJogador2 -- Registra vitória do jogador 2
-            return ()  -- Finaliza o jogo se o jogador 1 ganhou ou perdeu
-        else do
-            clearScreen
-            -- Turno do jogador 2
-            putStrLn $ "Turno do Jogador 2: " ++ T.unpack nomeJogador2
-            (novaOculta2, novosErros2, novosPontos2) <- loopTurno conn nomeJogador2 palavra oculta2 erros2 pontos2
-
-            -- Verifica se o jogador 2 ganhou ou perdeu
-            if novaOculta2 == palavra || novosErros2 >= 6
-                then do
-                    if novaOculta2 == palavra
-                        then do
-                            putStrLn $ T.unpack nomeJogador2 ++ " venceu!"
-                            atualizarVitorias conn nomeJogador2 -- Registra vitória do jogador 2
-                            atualizarDerrotas conn nomeJogador1 -- Registra derrota do jogador 1
-                        else do
-                            putStrLn $ T.unpack nomeJogador2 ++ " perdeu! A palavra era: " ++ palavra
-                            atualizarDerrotas conn nomeJogador2 -- Registra derrota do jogador 2
-                            atualizarVitorias conn nomeJogador1 -- Registra vitória do jogador 1
-                    return ()  -- Finaliza o jogo se o jogador 2 ganhou ou perdeu
-                else loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 palavra novaOculta1 novaOculta2 novosErros1 novosErros2 novosPontos1 novosPontos2
+            putStrLn "Ambos os jogadores terminaram suas palavras!"
+            putStrLn $ "Pontuação final de " ++ T.unpack nomeJogador1 ++ ": " ++ show novosPontos1
+            putStrLn $ "Pontuação final de " ++ T.unpack nomeJogador2 ++ ": " ++ show novosPontos2
+            if novosPontos1 > novosPontos2
+                then putStrLn $ "Parabéns " ++ T.unpack nomeJogador1 ++ ", você venceu!"
+                else if novosPontos2 > novosPontos1
+                    then putStrLn $ "Parabéns " ++ T.unpack nomeJogador2 ++ ", você venceu!"
+                    else putStrLn "Empate!"
+        else loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 palavras novaOculta1 novaOculta2 novosErros1 novosErros2 novosPontos1 novosPontos2

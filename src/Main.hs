@@ -2,14 +2,11 @@
 
 module Main where
 
-import Database (conectarBanco, atualizarPontos, atualizarDerrotas, atualizarVitorias, exibirClassificacao)
-import GameFunctions (loopJogoDoisJogadores, inicializarOculta, atualizarOculta, formatarOculta, mostrarBoneco, loopTurno)
-import Database.MySQL.Simple (Connection, close)
+import Database (conectarBanco, exibirClassificacao, escolherTema, escolherPalavras)
+import GameFunctions (inicializarOculta, loopJogoDoisJogadores)
+import Database.MySQL.Simple (close)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Control.Monad (when)
-import Data.Char (toLower)
-import System.Console.ANSI (clearScreen)
 
 main :: IO ()
 main = do
@@ -23,19 +20,19 @@ main = do
     putStrLn "Digite o nome do jogador 2: "
     nomeJogador2 <- T.pack <$> getLine
 
-    -- Seleção da palavra
-    putStrLn "Digite a palavra para o jogo: "
-    palavra <- getLine
-    let palavraLimpa = filter (/= ' ') (map toLower palavra)
-    when (null palavraLimpa) $ do
-        putStrLn "A palavra não pode ser vazia. Tente novamente."
-        main
+    -- Seleção do tema
+    temaEscolhido <- escolherTema conn
+    palavras <- escolherPalavras conn temaEscolhido
 
-    -- Inicializa a palavra oculta para ambos os jogadores
-    let oculta1 = inicializarOculta palavraLimpa
-    let oculta2 = inicializarOculta palavraLimpa
+    if length palavras == 3
+        then do
+            -- Inicializa as palavras ocultas para ambos os jogadores
+            let oculta1 = map inicializarOculta palavras
+            let oculta2 = map inicializarOculta palavras
 
-    -- Inicia o loop do jogo
-    loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 palavraLimpa oculta1 oculta2 0 0 0 0
+            -- Inicia o loop do jogo
+            loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 palavras oculta1 oculta2 0 0 0 0
+
+        else putStrLn "Erro: Não foi possível iniciar o jogo."
 
     close conn
