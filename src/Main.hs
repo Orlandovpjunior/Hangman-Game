@@ -216,6 +216,31 @@ randomIndices maxVal count = go count []
             then go n acc
             else go (n - 1) (i : acc)
 
+-- Função para criar um novo usuário
+criaUsuario :: Connection -> Text -> IO()
+criaUsuario conn nickname = do
+    exists <- readUsuario conn nickname
+
+    if exists
+        then do
+            resultados <- query_ conn "SELECT nome, pontos, vitorias, derrotas FROM usuarios ORDER BY pontos DESC" :: IO [(Text, Int, Int, Int)]
+            print("Jogador selecionado")
+        else do
+            let sql = "INSERT INTO usuarios (nome, pontos, vitorias, derrotas) VALUES (?, 0, 0, 0)"
+            execute conn sql (Only nickname)
+            print("Usuario criado com sucesso!")
+            
+-- Função auxiliar para verificar se um usuário com o nickname especificado existe
+readUsuario :: Connection -> Text -> IO Bool
+readUsuario conn nickname = do
+    let sql = "SELECT COUNT(1) FROM usuarios WHERE nome = ?"
+    count <- query conn sql (Only nickname) :: IO [Only Int]
+    return $ case count of
+        [Only c] -> c > 0
+        _        -> False
+
+
+
 -- Função principal que começa o jogo com dois jogadores
 main :: IO ()
 main = do
@@ -226,8 +251,13 @@ main = do
     -- Seleção dos jogadores
     putStrLn "Digite o nome do jogador 1: "
     nomeJogador1 <- T.pack <$> getLine
+
+    criaUsuario conn nomeJogador1
+
     putStrLn "Digite o nome do jogador 2: "
     nomeJogador2 <- T.pack <$> getLine
+
+    criaUsuario conn nomeJogador2
 
     -- Seleção do tema
     temas <- listarTemas conn
@@ -262,3 +292,5 @@ main = do
                     loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 [palavra1, palavra2, palavra3] oculta1 oculta2 0 0 0 0 [] []
 
     close conn
+
+
