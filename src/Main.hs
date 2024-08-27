@@ -1,13 +1,222 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Main where
-
-import Database (conectarBanco, exibirClassificacao, escolherTema, escolherPalavras)
-import GameFunctions (inicializarOculta, loopJogoDoisJogadores)
-import Database.MySQL.Simple (close)
+import Database.MySQL.Simple
+import Database.MySQL.Simple.QueryResults
+import Control.Exception (bracket)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Control.Monad (when)
+import Data.List (intersperse, delete)
+import Data.Char (toLower)
+import System.Console.ANSI (clearScreen)
+import System.Random (randomRIO)
 
+
+-- Representações do boneco
+boneco :: [String]
+boneco =
+    [ "  _____\n |     |\n |\n |\n |\n |"
+    , "  _____\n |     |\n |     O\n |\n |\n |"
+    , "  _____\n |     |\n |     O\n |     |\n |\n |"
+    , "  _____\n |     |\n |     O\n |    /|\n |\n |"
+    , "  _____\n |     |\n |     O\n |    /|\\\n |\n |"
+    , "  _____\n |     |\n |     O\n |    /|\\\n |    /\n |"
+    , "  _____\n |     |\n |     O\n |    /|\\\n |    / \\\n |"
+    ]
+
+-- Função para inicializar a palavra oculta com '_'
+inicializarOculta :: String -> String
+inicializarOculta palavra = replicate (length palavra) '_'
+
+-- Função para atualizar a palavra oculta com base na letra adivinhada
+atualizarOculta :: String -> Char -> String -> String
+atualizarOculta palavra palpite oculta =
+    [ if p == palpite then p else o | (p, o) <- zip palavra oculta ]
+
+-- Função para formatar a palavra oculta com espaços entre os caracteres
+formatarOculta :: String -> String
+formatarOculta oculta = unwords (map (:[]) oculta)
+
+-- Função para mostrar o boneco
+mostrarBoneco :: Int -> IO ()
+mostrarBoneco erros = putStrLn $ boneco !! min erros (length boneco - 1)
+
+-- Função para exibir letras já tentadas
+exibirLetrasTentadas :: [Char] -> IO ()
+exibirLetrasTentadas tentadas = putStrLn $ "Letras já tentadas: " ++ [c | c <- tentadas]
+
+-- Função para o turno de cada jogador
+loopTurno :: Connection -> Text -> String -> String -> Int -> Int -> [Char] -> IO (String, Int, Int, [Char])
+loopTurno conn nomeUsuario palavra oculta erros pontos tentadas = do
+    if erros >= 6
+        then do
+            mostrarBoneco erros
+            putStrLn $ "Você perdeu! A palavra era: " ++ palavra
+            atualizarPontos conn nomeUsuario (-pontos)
+            atualizarDerrotas conn nomeUsuario
+            return (oculta, erros, pontos, tentadas)
+        else do
+            mostrarBoneco erros
+            putStrLn $ "Palavra: " ++ formatarOculta oculta
+            putStrLn $ "Erros: " ++ show erros
+            exibirLetrasTentadas tentadas
+            putStr "Adivinhe uma letra: "
+            palpite <- getChar
+            _ <- getLine -- Para consumir o caractere de nova linha após a entrada
+
+            let palpiteLower = toLower palpite
+            if palpiteLower `elem` tentadas
+                then do
+                    putStrLn "Você já tentou essa letra. Tente outra."
+                    loopTurno conn nomeUsuario palavra oculta erros pontos tentadas
+                else if palpiteLower `elem` palavra
+                    then do
+                        let novaOculta = atualizarOculta palavra palpiteLower oculta
+                        if novaOculta == oculta
+                            then do
+                                putStrLn "Você já adivinhou essa letra. Tente outra."
+                                loopTurno conn nomeUsuario palavra oculta erros pontos (palpiteLower : tentadas)
+                            else do
+                                putStrLn "Acertou!"
+                                let novosPontos = pontos + 30
+                                atualizarPontos conn nomeUsuario 30
+                                if novaOculta == palavra
+                                    then do
+                                        putStrLn $ "Parabéns! Você ganhou! A palavra era: " ++ palavra
+                                        atualizarVitorias conn nomeUsuario
+                                        return (novaOculta, erros, novosPontos, palpiteLower : tentadas)
+                                    else return (novaOculta, erros, novosPontos, palpiteLower : tentadas)
+                    else do
+                        putStrLn "Letra errada!"
+                        let novosErros = erros + 1
+                        let novosPontos = pontos - 10
+                        atualizarPontos conn nomeUsuario (-10)
+                        return (oculta, novosErros, novosPontos, palpiteLower : tentadas)
+
+-- Função principal que começa o jogo com dois jogadores
+loopJogoDoisJogadores :: Connection -> Text -> Text -> [String] -> String -> String -> Int -> Int -> Int -> Int -> [Char] -> [Char] -> IO ()
+loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 [palavra1, palavra2, palavra3] oculta1 oculta2 erros1 erros2 pontos1 pontos2 tentadas1 tentadas2 = do
+    clearScreen
+
+    -- Turno do jogador 1
+    putStrLn $ "Turno do Jogador 1: " ++ T.unpack nomeJogador1
+    (novaOculta1, novosErros1, novosPontos1, novasTentativas1) <- loopTurno conn nomeJogador1 palavra1 oculta1 erros1 pontos1 tentadas1
+
+    -- Verifica se o jogador 1 ganhou ou perdeu
+    if novaOculta1 == palavra1 || novosErros1 >= 6
+        then do
+            if novaOculta1 == palavra1
+                then do
+                    putStrLn $ T.unpack nomeJogador1 ++ " venceu!"
+                    atualizarVitorias conn nomeJogador1 -- Registra vitória do jogador 1
+                    atualizarDerrotas conn nomeJogador2 -- Registra derrota do jogador 2
+                else do
+                    putStrLn $ T.unpack nomeJogador1 ++ " perdeu! A palavra era: " ++ palavra1
+                    atualizarDerrotas conn nomeJogador1 -- Registra derrota do jogador 1
+                    atualizarVitorias conn nomeJogador2 -- Registra vitória do jogador 2
+            return ()  -- Finaliza o jogo se o jogador 1 ganhou ou perdeu
+        else do
+            clearScreen
+            -- Turno do jogador 2
+            putStrLn $ "Turno do Jogador 2: " ++ T.unpack nomeJogador2
+            (novaOculta2, novosErros2, novosPontos2, novasTentativas2) <- loopTurno conn nomeJogador2 palavra2 oculta2 erros2 pontos2 tentadas2
+
+            -- Verifica se o jogador 2 ganhou ou perdeu
+            if novaOculta2 == palavra2 || novosErros2 >= 6
+                then do
+                    if novaOculta2 == palavra2
+                        then do
+                            putStrLn $ T.unpack nomeJogador2 ++ " venceu!"
+                            atualizarVitorias conn nomeJogador2 -- Registra vitória do jogador 2
+                            atualizarDerrotas conn nomeJogador1 -- Registra derrota do jogador 1
+                        else do
+                            putStrLn $ T.unpack nomeJogador2 ++ " perdeu! A palavra era: " ++ palavra2
+                            atualizarDerrotas conn nomeJogador2 -- Registra derrota do jogador 2
+                            atualizarVitorias conn nomeJogador1 -- Registra vitória do jogador 1
+                    return ()  -- Finaliza o jogo se o jogador 2 ganhou ou perdeu
+                else loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 [palavra1, palavra2, palavra3] novaOculta1 novaOculta2 novosErros1 novosErros2 novosPontos1 novosPontos2 novasTentativas1 novasTentativas2
+
+-- Conectar ao banco de dados
+conectarBanco :: IO Connection
+conectarBanco = connect
+    defaultConnectInfo { connectHost = "autorack.proxy.rlwy.net"
+                       , connectUser = "root"
+                       , connectPassword = "vwUBStNRhctaVJejQuzCZxFhowguOcFS"
+                       , connectDatabase = "railway"
+                       , connectPort = 41717
+                       }
+
+-- Atualizar o número de derrotas do usuário
+atualizarDerrotas :: Connection -> Text -> IO ()
+atualizarDerrotas conn nomeUsuario = do
+    let sql = "UPDATE usuarios SET derrotas = derrotas + 1 WHERE nome = ?"
+    execute conn sql (Only nomeUsuario)
+    putStrLn "Derrota registrada com sucesso!"
+
+-- Atualizar o número de vitórias do usuário
+atualizarVitorias :: Connection -> Text -> IO ()
+atualizarVitorias conn nomeUsuario = do
+    let sql = "UPDATE usuarios SET vitorias = vitorias + 1 WHERE nome = ?"
+    execute conn sql (Only nomeUsuario)
+    putStrLn "Vitória registrada com sucesso!"
+
+-- Atualizar a pontuação do usuário
+atualizarPontos :: Connection -> Text -> Int -> IO ()
+atualizarPontos conn nomeUsuario pontos = do
+    let sql = "UPDATE usuarios SET pontos = pontos + ? WHERE nome = ?"
+    execute conn sql (pontos, nomeUsuario)
+    putStrLn "Pontuação atualizada com sucesso!"
+
+-- Exibir a classificação dos usuários com numeração e alinhamento
+exibirClassificacao :: Connection -> IO ()
+exibirClassificacao conn = do
+    resultados <- query_ conn "SELECT nome, pontos, vitorias, derrotas FROM usuarios ORDER BY pontos DESC" :: IO [(Text, Int, Int, Int)]
+    putStrLn "Classificação dos Usuários:"
+    putStrLn $ T.unpack $ T.intercalate "  " ["Posição", "Nome", "Pontos", "Vitórias", "Derrotas"]
+    putStrLn $ replicate 50 '-'
+    mapM_ imprimirResultado (zip [1..] resultados)
+  where
+    imprimirResultado (pos, (nome, pontos, vitorias, derrotas)) = do
+        let posStr = show pos ++ "º"
+        let nomeStr = T.unpack nome
+        let pontosStr = show pontos
+        let vitoriasStr = show vitorias
+        let derrotasStr = show derrotas
+        putStrLn $ alignLeft 8 posStr ++ alignLeft 15 nomeStr ++ alignRight 10 pontosStr ++ alignRight 10 vitoriasStr ++ alignRight 10 derrotasStr
+
+    alignLeft n str = str ++ replicate (n - length str) ' '
+    alignRight n str = replicate (n - length str) ' ' ++ str
+
+-- Função para listar os temas disponíveis
+listarTemas :: Connection -> IO [(Int, Text)]
+listarTemas conn = do
+    temas <- query_ conn "SELECT id, nome FROM temas" :: IO [(Int, Text)]
+    return temas
+
+-- Função para selecionar palavras por tema
+selecionarPalavrasPorTema :: Connection -> Int -> IO [String]
+selecionarPalavrasPorTema conn temaId = do
+    palavras <- query conn "SELECT palavra FROM palavras WHERE tema_id = ?" (Only temaId) :: IO [Only Text]
+    return [T.unpack p | Only p <- palavras]
+
+-- Função para escolher n palavras aleatórias distintas
+escolherPalavrasAleatorias :: [String] -> Int -> IO [String]
+escolherPalavrasAleatorias palavras n = do
+    indices <- randomIndices (length palavras) n
+    return [palavras !! i | i <- indices]
+
+-- Função auxiliar para gerar índices aleatórios únicos
+randomIndices :: Int -> Int -> IO [Int]
+randomIndices maxVal count = go count []
+  where
+    go 0 acc = return acc
+    go n acc = do
+        i <- randomRIO (0, maxVal - 1)
+        if i `elem` acc
+            then go n acc
+            else go (n - 1) (i : acc)
+
+-- Função principal que começa o jogo com dois jogadores
 main :: IO ()
 main = do
     conn <- conectarBanco
@@ -21,18 +230,35 @@ main = do
     nomeJogador2 <- T.pack <$> getLine
 
     -- Seleção do tema
-    temaEscolhido <- escolherTema conn
-    palavras <- escolherPalavras conn temaEscolhido
+    temas <- listarTemas conn
+    putStrLn "Escolha um tema:"
+    mapM_ (putStrLn . (\(id, nome) -> show id ++ ": " ++ T.unpack nome)) temas
+    putStr "Digite o número do tema: "
+    temaEscolhido <- readLn
 
-    if length palavras == 3
+    let temaIndex = temaEscolhido
+    if temaIndex <= 0 || temaIndex > length temas
         then do
-            -- Inicializa as palavras ocultas para ambos os jogadores
-            let oculta1 = map inicializarOculta palavras
-            let oculta2 = map inicializarOculta palavras
+            putStrLn "Tema inválido. Tente novamente."
+            main
+        else do
+            let (temaId, _) = temas !! (temaIndex - 1)
+            palavras <- selecionarPalavrasPorTema conn temaId
+            if length palavras < 6
+                then do
+                    putStrLn "Não há palavras suficientes para este tema. Tente novamente."
+                    main
+                else do
+                    -- Escolhe 3 palavras aleatórias para cada jogador
+                    palavrasAleatorias <- escolherPalavrasAleatorias palavras 6
+                    let (palavra1:palavrasRestantes) = palavrasAleatorias
+                    let (palavra2:palavra3:_) = palavrasRestantes
 
-            -- Inicia o loop do jogo
-            loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 palavras oculta1 oculta2 0 0 0 0
+                    -- Inicializa a palavra oculta para ambos os jogadores
+                    let oculta1 = inicializarOculta palavra1
+                    let oculta2 = inicializarOculta palavra2
 
-        else putStrLn "Erro: Não foi possível iniciar o jogo."
+                    -- Inicia o loop do jogo
+                    loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 [palavra1, palavra2, palavra3] oculta1 oculta2 0 0 0 0 [] []
 
     close conn
