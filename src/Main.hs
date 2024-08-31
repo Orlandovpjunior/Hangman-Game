@@ -239,7 +239,46 @@ readUsuario conn nickname = do
         [Only c] -> c > 0
         _        -> False
 
+-- Função para calcular e exibir o desempenho dos usuários
+displayPerformance :: Connection -> IO ()
+displayPerformance conn = do
+    results <- query_ conn "SELECT nome, vitorias, derrotas, pontos FROM usuarios" :: IO [(Text, Int, Int, Int)]
+    mapM_ printPerformance results
+  where
+    printPerformance (nome, vitorias, derrotas, pontuacao) = do
+        let victories = vitorias
+        let losses = derrotas
+        let points = pontuacao
+        let totalGames = victories + losses
+        let accuracy = if totalGames > 0 then (fromIntegral victories / fromIntegral totalGames) * 100 else 0
+        putStrLn $ "Jogador: " ++ T.unpack nome
+        putStrLn $ "Vitórias: " ++ show victories
+        putStrLn $ "Derrotas: " ++ show losses
+        putStrLn $ "Pontos: " ++ show points
+        putStrLn $ "Percentual de Acerto: " ++ show accuracy ++ "%"
+        putStrLn "-------------------------"
 
+-- Função para calcular e exibir o desempenho de um jogador específico
+displayPlayerPerformance :: Connection -> Text -> IO ()
+displayPlayerPerformance conn playerName = do
+    -- Consulta SQL com um parâmetro para o nome do jogador
+    results <- query conn
+        "SELECT nome, pontos, vitorias, derrotas FROM usuarios WHERE nome = ?"
+        (Only playerName) :: IO [(Text, Int, Int, Int)]
+    mapM_ printPerformance results
+  where
+    printPerformance (nome, pontos, vitorias, derrotas) = do
+        let victories = vitorias
+        let losses = derrotas
+        let points = pontos
+        let totalGames = victories + losses
+        let accuracy = if totalGames > 0 then (fromIntegral victories / fromIntegral totalGames) * 100 else 0
+        putStrLn $ "Jogador: " ++ T.unpack nome
+        putStrLn $ "Pontos: " ++ show points
+        putStrLn $ "Vitórias: " ++ show victories
+        putStrLn $ "Derrotas: " ++ show losses
+        putStrLn $ "Percentual de Acerto: " ++ show accuracy ++ "%"
+        putStrLn "-------------------------"
 
 -- Função principal que começa o jogo com dois jogadores
 main :: IO ()
