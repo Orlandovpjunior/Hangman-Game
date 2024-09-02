@@ -1,5 +1,5 @@
-generator
-_______o_
-1
-20
-om
+compilador
+c_____a___
+0
+60
+ca
