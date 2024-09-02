@@ -30,7 +30,7 @@ copyright:          (c) 2024 Orlandovpjunior
 build-type:         Simple
 
 -- Extra doc files to be distributed with the package, such as a CHANGELOG or a README.
-extra-doc-files:    CHANGELOG.md
+extra-doc-files:    src/CHANGELOG.md
 
 -- Extra source files to be distributed with the package, such as examples, or a tutorial module.
 -- extra-source-files:
@@ -47,7 +47,11 @@ executable Hangman-Game
     -- other-extensions: 
 
     -- Other library packages from which modules are imported.
-    build-depends:    base >= 4.13 && < 5.0, mysql-simple, text, ansi-terminal, random
+    build-depends:    base >= 4.13 && < 5.0, 
+	                  mysql-simple >= 0.4.3,
+					  text,
+					  ansi-terminal,
+					  random
 
     -- Directories containing source files.
     hs-source-dirs:   src

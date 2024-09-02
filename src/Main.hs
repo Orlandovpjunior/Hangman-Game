@@ -10,6 +10,9 @@ import Data.List (intersperse, delete)
 import Data.Char (toLower)
 import System.Console.ANSI (clearScreen)
 import System.Random (randomRIO)
+import System.IO (writeFile, readFile)
+import System.Exit (exitSuccess)
+import Data.List (intercalate)
 
 
 -- Representações do boneco
@@ -60,32 +63,38 @@ loopTurno conn nomeUsuario palavra oculta erros pontos tentadas = do
             putStrLn $ "Palavra: " ++ formatarOculta oculta
             putStrLn $ "Erros: " ++ show erros
             exibirLetrasTentadas tentadas
-            putStr "Adivinhe uma letra: "
-            palpite <- getChar
-            _ <- getLine -- Para consumir o caractere de nova linha após a entrada
+            putStr "Adivinhe uma letra: (ou digite 'pause' para pausar o jogo):  "
+            input <- getLine
+            let inputLower = map toLower input
 
-            let palpiteLower = toLower palpite
-            if palpiteLower `elem` tentadas
+            if inputLower == "pause"
                 then do
-                    putStrLn "Você já tentou essa letra. Tente outra."
-                    loopTurno conn nomeUsuario palavra oculta erros pontos tentadas
-                else if palpiteLower `elem` palavra
-                    then do
-                        let novaOculta = atualizarOculta palavra palpiteLower oculta
-                        if novaOculta == oculta
+                    salvarEstado "estado_jogo.txt" palavra oculta erros pontos tentadas
+                    putStrLn "Jogo pausado e salvo. Você pode continuar mais tarde."
+                    exitSuccess
+                else do
+                    let palpiteLower = toLower $ head input
+                    if palpiteLower `elem` tentadas
+                        then do
+                            putStrLn "Você já tentou essa letra. Tente outra."
+                            loopTurno conn nomeUsuario palavra oculta erros pontos tentadas
+                        else if palpiteLower `elem` palavra
                             then do
-                                putStrLn "Você já adivinhou essa letra. Tente outra."
-                                loopTurno conn nomeUsuario palavra oculta erros pontos (palpiteLower : tentadas)
-                            else do
-                                putStrLn "Acertou!"
-                                let novosPontos = pontos + 30
-                                atualizarPontos conn nomeUsuario 30
-                                if novaOculta == palavra
+                                let novaOculta = atualizarOculta palavra palpiteLower oculta
+                                if novaOculta == oculta
                                     then do
-                                        putStrLn $ "Parabéns! Você ganhou! A palavra era: " ++ palavra
-                                        atualizarVitorias conn nomeUsuario
-                                        return (novaOculta, erros, novosPontos, palpiteLower : tentadas)
-                                    else return (novaOculta, erros, novosPontos, palpiteLower : tentadas)
+                                        putStrLn "Você já adivinhou essa letra. Tente outra."
+                                        loopTurno conn nomeUsuario palavra oculta erros pontos (palpiteLower : tentadas)
+                                    else do
+                                        putStrLn "Acertou!"
+                                        let novosPontos = pontos + 30
+                                        atualizarPontos conn nomeUsuario 30
+                                        if novaOculta == palavra
+                                            then do
+                                                putStrLn $ "Parabéns! Você ganhou! A palavra era: " ++ palavra
+                                                atualizarVitorias conn nomeUsuario
+                                                return (novaOculta, erros, novosPontos, palpiteLower : tentadas)
+                                            else return (novaOculta, erros, novosPontos, palpiteLower : tentadas)
                     else do
                         putStrLn "Letra errada!"
                         let novosErros = erros + 1
@@ -134,7 +143,7 @@ loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 [palavra1, palavra2, palavr
                             atualizarDerrotas conn nomeJogador2 -- Registra derrota do jogador 2
                             atualizarVitorias conn nomeJogador1 -- Registra vitória do jogador 1
                     return ()  -- Finaliza o jogo se o jogador 2 ganhou ou perdeu
-                else loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 [palavra1, palavra2, palavra3] novaOculta1 novaOculta2 novosErros1 novosErros2 novosPontos1 novosPontos2 novasTentativas1 novasTentativas2
+                else loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 [palavra1, palavra2, ""] novaOculta1 novaOculta2 novosErros1 novosErros2 novosPontos1 novosPontos2 novasTentativas1 novasTentativas2
 
 -- Conectar ao banco de dados
 conectarBanco :: IO Connection
@@ -239,7 +248,34 @@ readUsuario conn nickname = do
         [Only c] -> c > 0
         _        -> False
 
+-- Função para selecionar palavras com base na dificuldade
+selecionarPalavrasPorDificuldade :: Connection -> String -> IO [String]
+selecionarPalavrasPorDificuldade conn dificuldade = do
+    putStrLn $ "Consultando palavras com dificuldade: " ++ dificuldade
+    -- Consulta as palavras com base na dificuldade
+    palavras <- query conn
+        "SELECT palavra FROM palavras WHERE dificuldade = ?"
+        (Only (T.pack dificuldade)) :: IO [Only T.Text]
+    return [T.unpack p | Only p <- palavras]
 
+-- Função para salvar o estado do jogo em um arquivo
+salvarEstado :: FilePath -> String -> String -> Int -> Int -> String -> IO ()
+salvarEstado caminho palavra oculta erros pontos tentadas = do
+    let tentadasString = [c | c <- tentadas] 
+    let conteudo = unlines [palavra, oculta, show erros, show pontos, tentadasString]
+    writeFile caminho conteudo
+
+-- Função para carregar o estado do jogo a partir de um arquivo
+carregarEstado :: FilePath -> IO (String, String, Int, Int, [Char])
+carregarEstado caminho = do
+    conteudo <- readFile caminho
+    let [palavra, oculta, errosStr, pontosStr, tentadasStr] = lines conteudo
+    return ( palavra
+           , oculta
+           , read errosStr
+           , read pontosStr
+           , tentadasStr
+           )
 
 -- Função principal que começa o jogo com dois jogadores
 main :: IO ()
@@ -248,48 +284,77 @@ main = do
     exibirClassificacao conn
     putStrLn "Bem-vindo ao jogo da Forca!"
 
-    -- Seleção dos jogadores
-    putStrLn "Digite o nome do jogador 1: "
-    nomeJogador1 <- T.pack <$> getLine
-
-    criaUsuario conn nomeJogador1
-
-    putStrLn "Digite o nome do jogador 2: "
-    nomeJogador2 <- T.pack <$> getLine
-
-    criaUsuario conn nomeJogador2
-
-    -- Seleção do tema
-    temas <- listarTemas conn
-    putStrLn "Escolha um tema:"
-    mapM_ (putStrLn . (\(id, nome) -> show id ++ ": " ++ T.unpack nome)) temas
-    putStr "Digite o número do tema: "
-    temaEscolhido <- readLn
-
-    let temaIndex = temaEscolhido
-    if temaIndex <= 0 || temaIndex > length temas
+    -- Seleção de continuar um jogo pausado ou iniciar um novo
+    putStrLn "Deseja continuar um jogo pausado? (s/n)"
+    escolha <- getLine
+    if escolha == "s"
         then do
-            putStrLn "Tema inválido. Tente novamente."
-            main
+            (palavra, oculta, erros, pontos, tentadas) <- carregarEstado "estado_jogo.txt"
+            putStrLn "Continuando o jogo pausado..."
+            -- Atribuindo o nome do jogador de maneira estática para o loop de um jogador
+            let nomeJogador1 = "Jogador1"
+            let nomeJogador2 = "Jogador2"
+            -- Supondo que você tenha um modo de jogo para um jogador ou dois jogadores,
+            -- você pode adaptar para chamar o loop de jogo adequado.
+            -- Aqui, assumimos dois jogadores para o exemplo:
+            let palavras = [palavra, palavra, palavra]  -- Ajuste conforme necessário
+            loopJogoDoisJogadores conn (T.pack nomeJogador1) (T.pack nomeJogador2) palavras oculta oculta erros erros pontos pontos tentadas tentadas
+
         else do
-            let (temaId, _) = temas !! (temaIndex - 1)
-            palavras <- selecionarPalavrasPorTema conn temaId
-            if length palavras < 6
-                then do
-                    putStrLn "Não há palavras suficientes para este tema. Tente novamente."
-                    main
-                else do
-                    -- Escolhe 3 palavras aleatórias para cada jogador
-                    palavrasAleatorias <- escolherPalavrasAleatorias palavras 6
-                    let (palavra1:palavrasRestantes) = palavrasAleatorias
-                    let (palavra2:palavra3:_) = palavrasRestantes
+        -- Seleção dos jogadores
+        putStrLn "Digite o nome do jogador 1: "
+        nomeJogador1 <- T.pack <$> getLine
 
-                    -- Inicializa a palavra oculta para ambos os jogadores
-                    let oculta1 = inicializarOculta palavra1
-                    let oculta2 = inicializarOculta palavra2
+        criaUsuario conn nomeJogador1
 
-                    -- Inicia o loop do jogo
-                    loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 [palavra1, palavra2, palavra3] oculta1 oculta2 0 0 0 0 [] []
+        putStrLn "Digite o nome do jogador 2: "
+        nomeJogador2 <- T.pack <$> getLine
+
+        criaUsuario conn nomeJogador2
+
+        -- Escolha do nível de dificuldade
+        putStrLn "Escolha o nível de dificuldade (fácil, médio, difícil):"
+        dificuldade <- getLine
+        let dificuldadeLower = map toLower dificuldade
+
+        -- Seleção das palavras com base na dificuldade
+        palavras <- selecionarPalavrasPorDificuldade conn dificuldadeLower
+        when (length palavras < 6) $ do
+            putStrLn "Não há palavras suficientes para este nível de dificuldade. Tente novamente."
+            main
+            return ()  -- Para evitar o processamento adicional se não houver palavras suficientes
+
+        -- Seleção do tema
+        temas <- listarTemas conn
+        putStrLn "Escolha um tema:"
+        mapM_ (putStrLn . (\(id, nome) -> show id ++ ": " ++ T.unpack nome)) temas
+        putStr "Digite o número do tema: "
+        temaEscolhido <- readLn
+
+        let temaIndex = temaEscolhido
+        if temaIndex <= 0 || temaIndex > length temas
+            then do
+                putStrLn "Tema inválido. Tente novamente."
+                main
+            else do
+                let (temaId, _) = temas !! (temaIndex - 1)
+                palavras <- selecionarPalavrasPorTema conn temaId
+                if length palavras < 6
+                    then do
+                        putStrLn "Não há palavras suficientes para este tema. Tente novamente."
+                        main
+                    else do
+                        -- Escolhe 3 palavras aleatórias para cada jogador
+                        palavrasAleatorias <- escolherPalavrasAleatorias palavras 6
+                        let (palavra1:palavrasRestantes) = palavrasAleatorias
+                        let (palavra2:palavra3:_) = palavrasRestantes
+
+                        -- Inicializa a palavra oculta para ambos os jogadores
+                        let oculta1 = inicializarOculta palavra1
+                        let oculta2 = inicializarOculta palavra2
+
+                        -- Inicia o loop do jogo
+                        loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 [palavra1, palavra2, palavra3] oculta1 oculta2 0 0 0 0 [] []
 
     close conn
 
