@@ -1,2 +1,3 @@
 # Hangman-Game
-O maior jogo da forca de todos os tempos
+Para rodar o jogo:
+- cabal run
