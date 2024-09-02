@@ -1,12 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import Database.MySQL.Simple
-import Database.MySQL.Simple.QueryResults
-import Control.Exception (bracket)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Control.Monad (when)
-import Data.List (intersperse, delete)
 import Data.Char (toLower)
 import System.Console.ANSI (clearScreen)
 import System.Random (randomRIO)
@@ -93,7 +89,29 @@ loopTurno conn nomeUsuario palavra oculta erros pontos tentadas = do
                         atualizarPontos conn nomeUsuario (-10)
                         return (oculta, novosErros, novosPontos, palpiteLower : tentadas)
 
--- Função principal que começa o jogo com dois jogadores
+-- Função principal que começa o jogo com dois jogadores e registra o confronto
+confrontoEntreJogadores :: Text -> Text -> IO ()
+confrontoEntreJogadores nomeJogador1 nomeJogador2 = do
+    conn <- conectarBanco
+
+    -- Define as palavras e as condições iniciais do jogo
+    let palavras = ["palavra1", "palavra2", "palavra3"]  -- Substitua por palavras reais
+        oculta1 = "______"  -- Substitua por palavra oculta inicial para o jogador 1
+        oculta2 = "______"  -- Substitua por palavra oculta inicial para o jogador 2
+        erros1 = 0
+        erros2 = 0
+        pontos1 = 0
+        pontos2 = 0
+        tentadas1 = []
+        tentadas2 = []
+
+    -- Inicia o loop do jogo entre dois jogadores
+    loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 palavras oculta1 oculta2 erros1 erros2 pontos1 pontos2 tentadas1 tentadas2
+
+    -- Fecha a conexão com o banco de dados
+    close conn
+
+-- Método loopJogoDoisJogadores modificado para registrar confrontos no banco
 loopJogoDoisJogadores :: Connection -> Text -> Text -> [String] -> String -> String -> Int -> Int -> Int -> Int -> [Char] -> [Char] -> IO ()
 loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 [palavra1, palavra2, palavra3] oculta1 oculta2 erros1 erros2 pontos1 pontos2 tentadas1 tentadas2 = do
     clearScreen
@@ -110,10 +128,12 @@ loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 [palavra1, palavra2, palavr
                     putStrLn $ T.unpack nomeJogador1 ++ " venceu!"
                     atualizarVitorias conn nomeJogador1 -- Registra vitória do jogador 1
                     atualizarDerrotas conn nomeJogador2 -- Registra derrota do jogador 2
+                    registrarConfronto conn nomeJogador1 nomeJogador2 nomeJogador1 -- Registra confronto
                 else do
                     putStrLn $ T.unpack nomeJogador1 ++ " perdeu! A palavra era: " ++ palavra1
                     atualizarDerrotas conn nomeJogador1 -- Registra derrota do jogador 1
                     atualizarVitorias conn nomeJogador2 -- Registra vitória do jogador 2
+                    registrarConfronto conn nomeJogador1 nomeJogador2 nomeJogador2 -- Registra confronto
             return ()  -- Finaliza o jogo se o jogador 1 ganhou ou perdeu
         else do
             clearScreen
@@ -129,13 +149,52 @@ loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 [palavra1, palavra2, palavr
                             putStrLn $ T.unpack nomeJogador2 ++ " venceu!"
                             atualizarVitorias conn nomeJogador2 -- Registra vitória do jogador 2
                             atualizarDerrotas conn nomeJogador1 -- Registra derrota do jogador 1
+                            registrarConfronto conn nomeJogador1 nomeJogador2 nomeJogador2 -- Registra confronto
                         else do
                             putStrLn $ T.unpack nomeJogador2 ++ " perdeu! A palavra era: " ++ palavra2
                             atualizarDerrotas conn nomeJogador2 -- Registra derrota do jogador 2
                             atualizarVitorias conn nomeJogador1 -- Registra vitória do jogador 1
+                            registrarConfronto conn nomeJogador1 nomeJogador2 nomeJogador1 -- Registra confronto
                     return ()  -- Finaliza o jogo se o jogador 2 ganhou ou perdeu
                 else loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 [palavra1, palavra2, palavra3] novaOculta1 novaOculta2 novosErros1 novosErros2 novosPontos1 novosPontos2 novasTentativas1 novasTentativas2
 
+-- Função para registrar o confronto no banco de dados
+registrarConfronto :: Connection -> Text -> Text -> Text -> IO ()
+registrarConfronto conn nomeJogador1 nomeJogador2 vencedorNome = do
+    -- Obtém os IDs dos jogadores e do vencedor
+    [Only jogador1Id] <- query conn "SELECT id FROM Usuario WHERE nome = ?" [nomeJogador1] :: IO [Only Int]
+    [Only jogador2Id] <- query conn "SELECT id FROM Usuario WHERE nome = ?" [nomeJogador2] :: IO [Only Int]
+    [Only vencedorId] <- query conn "SELECT id FROM Usuario WHERE nome = ?" [vencedorNome] :: IO [Only Int]
+    
+    -- Insere o confronto na tabela Confronto
+    let queryStr = "INSERT INTO Confronto (jogador1_id, jogador2_id, vencedor_id) VALUES (?, ?, ?)"
+    execute conn queryStr (jogador1Id, jogador2Id, vencedorId)
+    putStrLn "Confronto registrado com sucesso!"
+
+-- Função para obter o histórico de confrontos entre dois jogadores
+obterHistoricoEntreJogadores :: Connection -> Text -> Text -> IO ()
+obterHistoricoEntreJogadores conn nomeJogador1 nomeJogador2 = do
+    -- Obtém os IDs dos jogadores
+    [Only jogador1Id] <- query conn "SELECT id FROM Usuario WHERE nome = ?" [nomeJogador1] :: IO [Only Int]
+    [Only jogador2Id] <- query conn "SELECT id FROM Usuario WHERE nome = ?" [nomeJogador2] :: IO [Only Int]
+
+    -- Consulta para obter o histórico de vitórias e derrotas entre os dois jogadores
+    resultados <- query conn 
+        "SELECT \
+        \ SUM(CASE WHEN vencedor_id = ? THEN 1 ELSE 0 END) AS vitorias, \
+        \ SUM(CASE WHEN vencedor_id <> ? AND (jogador1_id = ? OR jogador2_id = ?) THEN 1 ELSE 0 END) AS derrotas \
+        \ FROM Confronto \
+        \ WHERE (jogador1_id = ? AND jogador2_id = ?) OR (jogador1_id = ? AND jogador2_id = ?)"
+        (jogador1Id, jogador1Id, jogador1Id, jogador1Id, jogador1Id, jogador2Id, jogador2Id, jogador1Id) :: IO [(Int, Int)]
+    
+    -- Exibe o histórico entre os dois jogadores
+    case resultados of
+        [(vitorias, derrotas)] -> do
+            putStrLn $ T.unpack nomeJogador1 ++ " vs " ++ T.unpack nomeJogador2 ++ ":"
+            putStrLn $ show vitorias ++ " vitórias, " ++ show derrotas ++ " derrotas"
+        _ -> putStrLn "Erro ao recuperar o histórico."
+
+    
 -- Conectar ao banco de dados
 conectarBanco :: IO Connection
 conectarBanco = connect
