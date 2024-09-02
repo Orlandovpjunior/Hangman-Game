@@ -1,5 +1,5 @@
-polimorfismo
-____m_____m_
-0
-30
-m
+generator
+_______o_
+1
+20
+om

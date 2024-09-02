@@ -9,6 +9,8 @@ import System.Random (randomRIO)
 import System.IO (writeFile, readFile)
 import System.Exit (exitSuccess)
 import Data.List (intercalate)
+import Control.Monad (when)
+
 
 
 -- Representações do boneco
@@ -300,7 +302,6 @@ readUsuario conn nickname = do
         [Only c] -> c > 0
         _        -> False
 
-<<<<<<< HEAD
 -- Função para calcular e exibir o desempenho dos usuários
 displayPerformance :: Connection -> IO ()
 displayPerformance conn = do
@@ -341,7 +342,7 @@ displayPlayerPerformance conn playerName = do
         putStrLn $ "Derrotas: " ++ show losses
         putStrLn $ "Percentual de Acerto: " ++ show accuracy ++ "%"
         putStrLn "-------------------------"
-=======
+
 -- Função para selecionar palavras com base na dificuldade
 selecionarPalavrasPorDificuldade :: Connection -> String -> IO [String]
 selecionarPalavrasPorDificuldade conn dificuldade = do
@@ -370,7 +371,6 @@ carregarEstado caminho = do
            , read pontosStr
            , tentadasStr
            )
->>>>>>> feature/implement
 
 -- Função principal que começa o jogo com dois jogadores
 main :: IO ()
