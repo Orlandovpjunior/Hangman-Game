@@ -96,8 +96,8 @@ confrontoEntreJogadores nomeJogador1 nomeJogador2 = do
 
     -- Define as palavras e as condições iniciais do jogo
     let palavras = ["palavra1", "palavra2", "palavra3"]  -- Substitua por palavras reais
-        oculta1 = "______"  -- Substitua por palavra oculta inicial para o jogador 1
-        oculta2 = "______"  -- Substitua por palavra oculta inicial para o jogador 2
+        oculta1 = replicate (length (head palavras)) '_'  -- Substitua por palavra oculta inicial para o jogador 1
+        oculta2 = replicate (length (palavras !! 1)) '_'  -- Substitua por palavra oculta inicial para o jogador 2
         erros1 = 0
         erros2 = 0
         pontos1 = 0
@@ -111,7 +111,8 @@ confrontoEntreJogadores nomeJogador1 nomeJogador2 = do
     -- Fecha a conexão com o banco de dados
     close conn
 
--- Método loopJogoDoisJogadores modificado para registrar confrontos no banco
+
+-- Função principal que começa o jogo com dois jogadores
 loopJogoDoisJogadores :: Connection -> Text -> Text -> [String] -> String -> String -> Int -> Int -> Int -> Int -> [Char] -> [Char] -> IO ()
 loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 [palavra1, palavra2, palavra3] oculta1 oculta2 erros1 erros2 pontos1 pontos2 tentadas1 tentadas2 = do
     clearScreen
@@ -158,34 +159,26 @@ loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 [palavra1, palavra2, palavr
                     return ()  -- Finaliza o jogo se o jogador 2 ganhou ou perdeu
                 else loopJogoDoisJogadores conn nomeJogador1 nomeJogador2 [palavra1, palavra2, palavra3] novaOculta1 novaOculta2 novosErros1 novosErros2 novosPontos1 novosPontos2 novasTentativas1 novasTentativas2
 
+
 -- Função para registrar o confronto no banco de dados
 registrarConfronto :: Connection -> Text -> Text -> Text -> IO ()
 registrarConfronto conn nomeJogador1 nomeJogador2 vencedorNome = do
-    -- Obtém os IDs dos jogadores e do vencedor
-    [Only jogador1Id] <- query conn "SELECT id FROM Usuario WHERE nome = ?" [nomeJogador1] :: IO [Only Int]
-    [Only jogador2Id] <- query conn "SELECT id FROM Usuario WHERE nome = ?" [nomeJogador2] :: IO [Only Int]
-    [Only vencedorId] <- query conn "SELECT id FROM Usuario WHERE nome = ?" [vencedorNome] :: IO [Only Int]
-    
     -- Insere o confronto na tabela Confronto
-    let queryStr = "INSERT INTO Confronto (jogador1_id, jogador2_id, vencedor_id) VALUES (?, ?, ?)"
-    execute conn queryStr (jogador1Id, jogador2Id, vencedorId)
+    let queryStr = "INSERT INTO Confronto (jogador1_nome, jogador2_nome, vencedor_nome) VALUES (?, ?, ?)"
+    execute conn queryStr (nomeJogador1, nomeJogador2, vencedorNome)
     putStrLn "Confronto registrado com sucesso!"
 
 -- Função para obter o histórico de confrontos entre dois jogadores
 obterHistoricoEntreJogadores :: Connection -> Text -> Text -> IO ()
 obterHistoricoEntreJogadores conn nomeJogador1 nomeJogador2 = do
-    -- Obtém os IDs dos jogadores
-    [Only jogador1Id] <- query conn "SELECT id FROM Usuario WHERE nome = ?" [nomeJogador1] :: IO [Only Int]
-    [Only jogador2Id] <- query conn "SELECT id FROM Usuario WHERE nome = ?" [nomeJogador2] :: IO [Only Int]
-
     -- Consulta para obter o histórico de vitórias e derrotas entre os dois jogadores
     resultados <- query conn 
         "SELECT \
-        \ SUM(CASE WHEN vencedor_id = ? THEN 1 ELSE 0 END) AS vitorias, \
-        \ SUM(CASE WHEN vencedor_id <> ? AND (jogador1_id = ? OR jogador2_id = ?) THEN 1 ELSE 0 END) AS derrotas \
-        \ FROM Confronto \
-        \ WHERE (jogador1_id = ? AND jogador2_id = ?) OR (jogador1_id = ? AND jogador2_id = ?)"
-        (jogador1Id, jogador1Id, jogador1Id, jogador1Id, jogador1Id, jogador2Id, jogador2Id, jogador1Id) :: IO [(Int, Int)]
+        \ SUM(CASE WHEN c.vencedor_nome = ? THEN 1 ELSE 0 END) AS vitorias, \
+        \ SUM(CASE WHEN c.vencedor_nome <> ? THEN 1 ELSE 0 END) AS derrotas \
+        \ FROM Confronto c \
+        \ WHERE (c.jogador1_nome = ? AND c.jogador2_nome = ?) OR (c.jogador1_nome = ? AND c.jogador2_nome = ?)"
+        (nomeJogador1, nomeJogador1, nomeJogador1, nomeJogador2, nomeJogador2, nomeJogador1) :: IO [(Int, Int)]
     
     -- Exibe o histórico entre os dois jogadores
     case resultados of
