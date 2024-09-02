@@ -1,5 +1,5 @@
-compilador
-c_____a___
-0
-60
-ca
+syntax
+____a_
+2
+10
+gda
